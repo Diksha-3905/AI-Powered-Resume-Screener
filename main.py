@@ -2,6 +2,7 @@ import streamlit as st
 import docx2txt
 import PyPDF2
 from sentence_transformers import SentenceTransformer, util
+import pandas as pd
 
 # -------------------------------
 # Load embedding model once
@@ -20,6 +21,12 @@ def read_pdf(file):
 
 def read_docx(file):
     return docx2txt.process(file)
+
+def extract_resume_text(file):
+    if file.type == "application/pdf":
+        return read_pdf(file)
+    else:
+        return read_docx(file)
 
 # -------------------------------
 # Keyword-based matching
@@ -49,39 +56,43 @@ def semantic_similarity(jd_text, resume_text):
 # -------------------------------
 def main():
     st.title("AI-Powered Resume Screener 📄🤖")
-    st.write("Upload a Resume and provide a Job Description to compute a smart match score.")
+    st.write("Upload one or more resumes and provide a Job Description to compute match scores.")
 
-    # Upload Resume
-    uploaded_file = st.file_uploader("Upload Resume (PDF/DOCX)", type=["pdf", "docx"])
+    # Upload multiple resumes
+    uploaded_files = st.file_uploader("Upload Resumes (PDF/DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
     jd_text = st.text_area("Paste Job Description here")
 
-    if uploaded_file and jd_text.strip():
-        # Extract resume text
-        if uploaded_file.type == "application/pdf":
-            resume_text = read_pdf(uploaded_file)
-        else:
-            resume_text = read_docx(uploaded_file)
+    if uploaded_files and jd_text.strip():
+        results = []
 
-        if not resume_text.strip():
-            st.error("Could not extract text from resume. Try another file.")
-            return
+        for file in uploaded_files:
+            resume_text = extract_resume_text(file)
 
-        # Scores
-        keyword_score = keyword_match_score(resume_text, jd_text)
-        semantic_score = semantic_similarity(jd_text, resume_text)
-        final_score = round(0.7 * semantic_score + 0.3 * keyword_score, 2)
+            if not resume_text.strip():
+                continue
 
-        # Display results
-        st.subheader("📊 Screening Results")
-        st.write(f"**Keyword Match Score:** {keyword_score}%")
-        st.write(f"**Semantic Match Score:** {semantic_score}%")
-        st.success(f"✅ Final Candidate Match Score: {final_score}%")
+            keyword_score = keyword_match_score(resume_text, jd_text)
+            semantic_score = semantic_similarity(jd_text, resume_text)
+            final_score = round(0.7 * semantic_score + 0.3 * keyword_score, 2)
 
-        # Highlight keywords
-        matched_keywords = set(resume_text.lower().split()).intersection(set(jd_text.lower().split()))
-        if matched_keywords:
-            st.subheader("🔍 Matched Keywords")
-            st.write(", ".join(matched_keywords))
+            results.append({
+                "Candidate": file.name,
+                "Keyword Score (%)": keyword_score,
+                "Semantic Score (%)": semantic_score,
+                "Final Score (%)": final_score
+            })
+
+        if results:
+            df = pd.DataFrame(results).sort_values(by="Final Score (%)", ascending=False)
+            st.subheader("📊 Candidate Ranking")
+            st.dataframe(df, use_container_width=True)
+
+            # Download option
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download Results as CSV", data=csv, file_name="resume_ranking.csv", mime="text/csv")
+
+            top_candidate = df.iloc[0]
+            st.success(f"🏆 Top Candidate: {top_candidate['Candidate']} ({top_candidate['Final Score (%)']}%)")
 
 if __name__ == "__main__":
     main()
